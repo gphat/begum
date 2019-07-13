@@ -15,9 +15,19 @@ import (
 	kingpin "gopkg.in/alecthomas/kingpin.v2"
 )
 
+type Instance struct {
+	ErrorPct        int
+	LatencyMinMs    int
+	LatencyMaxMs    int
+	LatencyOffsetMs int
+}
+
 var (
+	instances = map[string]Instance{}
+
 	interval        = kingpin.Arg("interval", "Interval to update metrics").Default("1s").Duration()
 	address         = kingpin.Arg("address", "Address on which to listen for API calls").Default("127.0.0.1:8080").TCP()
+	instanceCount   = kingpin.Arg("instance_count", "Number of instances").Default("1").Int()
 	requestRate     = kingpin.Arg("request_rate", "Rate of requests to simulate, in requests per second").Default("100").Int()
 	errorPct        = kingpin.Arg("error_pct", "Percentage of errors to simulate, as percentage").Default("1").Int()
 	latencyMinMs    = kingpin.Arg("latency_min_ms", "Minimum latency value in milliseconds").Default("100").Int()
@@ -28,11 +38,11 @@ var (
 		Name:       "request_duration_millis",
 		Help:       "The duration of requuests",
 		Objectives: map[float64]float64{0.5: 0.05, 0.9: 0.01, 0.99: 0.001},
-	}, []string{"code"})
+	}, []string{"code", "instance"})
 	errorsEncountered = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "errors_encountered_total",
 		Help: "The total number of errors encountered",
-	}, []string{"code"})
+	}, []string{"code", "instance"})
 
 	mutex = &sync.RWMutex{}
 )
@@ -64,8 +74,21 @@ func handler(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
-	rand.Seed(time.Now().UnixNano())
 	kingpin.Parse()
+	log.Printf("Instance count is %d", *instanceCount)
+	for i := 0; i < *instanceCount; i++ {
+		name := string(rune(65 + i))
+		log.Printf("Made instances %s", name)
+		instances[name] = Instance{
+			ErrorPct:        *errorPct,
+			LatencyMinMs:    *latencyMinMs,
+			LatencyMaxMs:    *latencyMaxMs,
+			LatencyOffsetMs: *latencyOffsetMs,
+		}
+	}
+	log.Printf("Made %d instances", len(instances))
+
+	rand.Seed(time.Now().UnixNano())
 
 	http.HandleFunc("/", handler)
 	http.HandleFunc("/error_rate/", errorRateHandler)
@@ -83,15 +106,20 @@ func beginTicker(d time.Duration) {
 	go func() {
 		for t := range ticker.C {
 			mutex.RLock()
+
+			perInstanceRate := int(*requestRate / len(instances))
+
 			fmt.Println("Tick at", t)
-			for i := 0; i < *requestRate; i++ {
-				var status = "200"
-				if rand.Intn(100) <= *errorPct {
-					status = "500"
-					errorsEncountered.WithLabelValues(status).Inc()
+			for name, instance := range instances {
+				for i := 0; i < perInstanceRate; i++ {
+					var status = "200"
+					if rand.Intn(100) <= instance.ErrorPct {
+						status = "500"
+						errorsEncountered.WithLabelValues(status, name).Inc()
+					}
+					duration := instance.LatencyMinMs + rand.Intn(instance.LatencyMaxMs) + instance.LatencyOffsetMs
+					requestProcessMs.WithLabelValues(status, name).Observe(float64(duration))
 				}
-				duration := *latencyMinMs + rand.Intn(*latencyMaxMs) + *latencyOffsetMs
-				requestProcessMs.WithLabelValues(status).Observe(float64(duration))
 			}
 			mutex.RUnlock()
 		}
