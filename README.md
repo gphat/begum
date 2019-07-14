@@ -4,6 +4,10 @@ Begum is a tool that generates metrics similar to what would come out of an
 HTTP-based web or microservice. These metrics can be manipulated by making API
 calls to add and remove instances, adjust latencies, and error rates.
 
+By making various API calls you can simulate a cluster of instances of a
+service that generate realistic metrics, then cause some of these to become
+stricken with errors or increased latency.
+
 # Instances
 
 Begum runs as many "instances" as you like. Each has a name — by default
