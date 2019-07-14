@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"math/rand"
@@ -16,10 +17,10 @@ import (
 )
 
 type Instance struct {
-	ErrorPct        int
-	LatencyMinMs    int
-	LatencyMaxMs    int
-	LatencyOffsetMs int
+	ErrorPct        int `json:"error_pct"`
+	LatencyMinMs    int `json:"latency_min_ms"`
+	LatencyMaxMs    int `json:"latency_max_ms"`
+	LatencyOffsetMs int `json:"latency_offset_ms"`
 }
 
 var (
@@ -46,6 +47,87 @@ var (
 
 	mutex = &sync.RWMutex{}
 )
+
+func addInstanceHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Body == nil {
+		http.Error(w, "Please send a request body", http.StatusBadRequest)
+		return
+	}
+	defer r.Body.Close()
+	name := r.URL.Path[len("/instance/"):]
+	if name == "" {
+		http.Error(w, "Missing name", http.StatusBadRequest)
+	}
+	mutex.Lock()
+	defer mutex.Unlock()
+	if _, ok := instances[name]; ok {
+		http.Error(w, "Existing instance", http.StatusUnauthorized)
+		return
+	}
+
+	var instance Instance
+	err := json.NewDecoder(r.Body).Decode(&instance)
+	if err != nil {
+		log.Println(err)
+		http.Error(w, "Malformed instance", http.StatusBadRequest)
+		return
+	}
+
+	log.Printf("Adding instance '%s': %v", name, instance)
+	instances[name] = instance
+}
+
+func updateInstanceHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Body == nil {
+		http.Error(w, "Please send a request body", http.StatusBadRequest)
+		return
+	}
+	defer r.Body.Close()
+	name := r.URL.Path[len("/instance/"):]
+	mutex.Lock()
+	defer mutex.Unlock()
+	if _, ok := instances[name]; !ok {
+		http.Error(w, "Unknown instance", http.StatusNotFound)
+		return
+	}
+	var instance Instance
+	err := json.NewDecoder(r.Body).Decode(&instance)
+	if err != nil {
+		http.Error(w, "Malformed instance", http.StatusBadRequest)
+	}
+	log.Printf("Updating instance '%s'", name)
+	instances[name] = instance
+}
+
+func deleteInstanceHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Body == nil {
+		http.Error(w, "Please send a request body", http.StatusBadRequest)
+		return
+	}
+	defer r.Body.Close()
+	name := r.URL.Path[len("/instance/"):]
+	mutex.Lock()
+	defer mutex.Unlock()
+	if _, ok := instances[name]; !ok {
+		http.Error(w, "Unknown instance", http.StatusNotFound)
+		return
+	}
+	log.Printf("Deleting instance '%s'", name)
+	delete(instances, name)
+}
+
+func handleInstance(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case "DELETE":
+		deleteInstanceHandler(w, r)
+	case "POST":
+		addInstanceHandler(w, r)
+	case "PUT":
+		updateInstanceHandler(w, r)
+	default:
+		http.Error(w, "Invalid operation", http.StatusBadRequest)
+	}
+}
 
 func errorRateHandler(w http.ResponseWriter, r *http.Request) {
 	mutex.Lock()
@@ -93,6 +175,7 @@ func main() {
 	http.HandleFunc("/", handler)
 	http.HandleFunc("/error_rate/", errorRateHandler)
 	http.HandleFunc("/latency_offset/", latencyHandler)
+	http.HandleFunc("/instance/", handleInstance)
 	http.Handle("/metrics", promhttp.Handler())
 
 	beginTicker(*interval)
@@ -111,6 +194,7 @@ func beginTicker(d time.Duration) {
 
 			fmt.Println("Tick at", t)
 			for name, instance := range instances {
+				log.Printf("Instance '%s', %v", name, instance)
 				for i := 0; i < perInstanceRate; i++ {
 					var status = "200"
 					if rand.Intn(100) <= instance.ErrorPct {
