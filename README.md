@@ -20,6 +20,14 @@ sequentially `A, B, C…` etc and emits metrics.
 }
 ```
 
+## Fields And Effects
+
+* `error_pct`: % of requests that should be errors
+* `latency_min_ms`: Minimum value of latency per request
+* `latency_max_ms`: Maximum value of latency per request
+* `latency_offset_ms`: Amount of extra latency added after choosing a random
+latency between `latency_min_ms` and `latency_max_ms.`
+
 # API
 
 * `DELETE /instance/X` removes an instance named `X`, no body.
